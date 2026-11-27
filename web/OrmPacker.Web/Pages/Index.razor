@@ -1,0 +1,981 @@
+@page "/"
+@implements IDisposable
+@inject IJSRuntime JS
+
+<div class="app">
+    <header>
+        @* h1 stays a direct flex child so the header still lines up with a cached old CSS. *@
+        <h1>
+            <a href="https://github.com/Kiyzo/orm-packer" target="_blank" rel="noopener"
+               title="ORM Packer on GitHub"
+               style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:inherit">
+                <img src="favicon.png" alt="" width="32" height="32"
+                     style="border-radius:7px;border:1px solid #303c50" />
+                @Localization.Get("app.title")
+            </a>
+        </h1>
+        <a class="github-link" href="https://github.com/Kiyzo/orm-packer" target="_blank" rel="noopener"
+           style="text-decoration:none;color:#a9b6ca;font-size:12px">GitHub</a>
+        <div class="segmented">
+            <button class="@(Localization.Language == "ru" ? "active" : "")" @onclick="@(() => SetLanguage("ru"))">RU</button>
+            <button class="@(Localization.Language == "en" ? "active" : "")" @onclick="@(() => SetLanguage("en"))">EN</button>
+        </div>
+        <div class="subtitle">@Localization.Get("app.subtitle.web")</div>
+    </header>
+
+    <div class="grid @(_convertMode ? "convert" : "")">
+        <section class="panel settings">
+            @if (!_convertMode)
+            {
+                <div class="row">
+                    <label for="preset-select">@Localization.Get("header.preset")</label>
+                    <select id="preset-select" value="@SessionStore.PresetId(_preset)" @onchange="OnPresetChanged">
+                        @foreach (var preset in Preset.All)
+                        {
+                            <option value="@SessionStore.PresetId(preset)">@preset.DisplayName</option>
+                        }
+                    </select>
+                </div>
+            }
+            <div class="row">
+                <label for="size-select">@Localization.Get("header.size")</label>
+                <select id="size-select" @onchange="OnSizeChanged">
+                    @foreach (var size in OutputSize.All)
+                    {
+                        <option value="@(size.Pixels?.ToString() ?? "original")" selected="@ReferenceEquals(size, _size)">@size.DisplayName</option>
+                    }
+                </select>
+            </div>
+            <div class="row">
+                <label>@Localization.Get("mode.label")</label>
+                <div class="segmented" style="flex:1">
+                    <button class="@(!_convertMode ? "active" : "")" @onclick="@(() => SetMode(false))">@Localization.Get("mode.pack")</button>
+                    <button class="@(_convertMode ? "active" : "")" @onclick="@(() => SetMode(true))">@Localization.Get("mode.convert")</button>
+                </div>
+            </div>
+
+            @if (_convertMode)
+            {
+                <label class="source-card" for="orm-file-input" data-channel="-1">
+                    @if (_convertSource is null)
+                    {
+                        <strong>@Localization.Get("convert.dropHint")</strong>
+                    }
+                    else
+                    {
+                        <strong>@_convertSourceName</strong><br />
+                        <span>@_convertSource.Width × @_convertSource.Height</span>
+                    }
+                </label>
+                <div class="row">
+                    <label for="from-select">@Localization.Get("convert.from")</label>
+                    <select id="from-select" value="@SessionStore.PresetId(_fromPreset)" @onchange="OnFromChanged">
+                        @foreach (var preset in Preset.All)
+                        {
+                            <option value="@SessionStore.PresetId(preset)">@preset.DisplayName</option>
+                        }
+                    </select>
+                </div>
+                <div class="row">
+                    <label for="to-select">@Localization.Get("convert.to")</label>
+                    <select id="to-select" value="@SessionStore.PresetId(_preset)" @onchange="OnPresetChanged">
+                        @foreach (var preset in Preset.All)
+                        {
+                            <option value="@SessionStore.PresetId(preset)">@preset.DisplayName</option>
+                        }
+                    </select>
+                </div>
+                <div class="steps">
+                    <div class="step @(_convertSource is not null ? "done" : "")">@Localization.Get("convert.step.map")</div>
+                    <div class="step @(_preset != _fromPreset ? "done" : "")">@Localization.Get("convert.step.pair")</div>
+                    <div class="step @(_savedInSession ? "done" : "")">@Localization.Get("convert.step.save")</div>
+                </div>
+                <div class="panel mapping-panel">
+                    <strong>@Localization.Get("convert.mapping")</strong>
+                    @foreach (var mapping in PackerConvert.BuildMappings(_fromPreset, _preset))
+                    {
+                        <div class="mapping">
+                            <span style="color:@ChannelColors[(int)mapping.Target]">@ChannelName(mapping.Target)</span>
+                            <span>
+                                ← @(mapping.IsConstant
+                                    ? Localization.Get("convert.mapping.constant")
+                                    : _fromPreset.Channels[mapping.Source!.Value].DisplayName)
+                                @if (mapping.Invert) { <span class="badge">@Localization.Get("slot.invert")</span> }
+                            </span>
+                        </div>
+                    }
+                </div>
+                @if (_samePreset)
+                {
+                    <div class="notice">@Localization.Get("convert.same")</div>
+                }
+            }
+
+            <div class="row" style="margin-top:16px">
+                <label for="format-select">@Localization.Get("format.label")</label>
+                <select id="format-select" @onchange="OnFormatChanged">
+                    @foreach (var format in new[] { SaveFormat.Png, SaveFormat.Jpeg, SaveFormat.Tga, SaveFormat.Bmp })
+                    {
+                        <option value="@format.ToString().ToLowerInvariant()" selected="@(_format == format)">@format.ToString().ToUpperInvariant()</option>
+                    }
+                </select>
+            </div>
+            <div class="row">
+                <label for="filename-input">@Localization.Get("filename.label")</label>
+                <input id="filename-input" type="text" value="@_fileName" @oninput="OnNameChanged" placeholder="@Localization.Get("filename.placeholder")" />
+            </div>
+            <div class="actions">
+                <button class="primary" @onclick="Save" disabled="@(!HasInputs)">@Localization.Get("save.button")</button>
+                <button title="@Localization.Get("unpack.tip")" @onclick="Unpack" disabled="@(!CanUnpack)">@Localization.Get("convert.unpack")</button>
+                <button class="danger" @onclick="ClearAll" disabled="@(!HasInputs)">@Localization.Get("clear.slots")</button>
+            </div>
+            <div class="status">@(string.IsNullOrEmpty(_error) ? _status : "")</div>
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <div class="notice error">@_error</div>
+            }
+            @if (!string.IsNullOrEmpty(_notice))
+            {
+                <div class="notice">@_notice</div>
+            }
+            <div class="note">@Localization.Get("settings.hint")</div>
+        </section>
+
+        @if (!_convertMode)
+        {
+            <section class="panel slots">
+                <div class="note" style="margin:0 0 8px">
+                    @Localization.Get("slots.hint")
+                </div>
+                @for (var i = 0; i < 4; i++)
+                {
+                    var channel = (Channel)i;
+                    var image = _images[i];
+                    var stats = SlotDiagnostics.Stats(_inputs[i]);
+                    var warnings = SlotDiagnostics.Warnings(_inputs, i, stats, HasAnyMap);
+                    <div class="channel" data-channel="@i" @onclick="@(() => JS.InvokeVoidAsync("ormInterop.pickFiles", (int)channel))">
+                        @if (string.IsNullOrEmpty(_thumbs[i]))
+                        {
+                            <div class="thumb empty"></div>
+                        }
+                        else
+                        {
+                            <img class="thumb" src="@_thumbs[i]" alt="@ChannelName(channel)" />
+                        }
+                        <div class="slot-main">
+                            <span class="name" style="color:@ChannelColors[i]">@ChannelName(channel)</span>
+                            <span class="file">@(image?.FileName ?? Localization.Get("slot.empty"))</span>
+                            <span class="stats">@string.Format(Localization.Get("slot.stats"), stats.Min, stats.Max, stats.Avg.ToString("F0"))</span>
+                            @foreach (var warning in warnings)
+                            {
+                                <span class="warning">@WarningText(warning)</span>
+                            }
+                            @if (!string.IsNullOrEmpty(_notices[i]))
+                            {
+                                <span class="warning">@_notices[i]</span>
+                            }
+                        </div>
+                        <select title="@T("Source component", "Источник")" @onclick:stopPropagation="true" @onchange="@(e => OnSourceChanged(channel, e))">
+                            @foreach (var component in Enum.GetValues<SourceComponent>())
+                            {
+                                <option value="@component" selected="@(_sources[i] == component)">@SourceComponentName(component)</option>
+                            }
+                        </select>
+                        <label class="checkbox" @onclick:stopPropagation="true">
+                            <input type="checkbox" checked="@_invert[i]" @onchange="@(e => OnInvert(channel, e))" />
+                            @Localization.Get("slot.invert")
+                        </label>
+                        <div class="value-control" @onclick:stopPropagation="true">
+                            <input type="range" min="0" max="255" value="@_solid[i]" @oninput="@(e => OnSolid(channel, e, true))" />
+                            <input type="number" min="0" max="255" value="@_solid[i]" @onchange="@(e => OnSolid(channel, e, false))" />
+                        </div>
+                        <button class="slot-clear" title="@T("Clear slot", "Очистить слот")" @onclick="@(() => ClearSlot(channel))" @onclick:stopPropagation="true">×</button>
+                    </div>
+                }
+            </section>
+        }
+
+        <section class="panel preview">
+            <div class="tabs">
+                @foreach (var tab in Tabs)
+                {
+                    var channelTab = tab is "R" or "G" or "B" or "A";
+                    <button class="@(_tab == tab ? "active" : "")" @onclick="@(() => SetTab(tab))"
+                            disabled="@(channelTab && !HasInputs)">@tab</button>
+                }
+                <button class="@(_fit ? "active" : "")" @onclick="@(() => _fit = !_fit)">@Localization.Get("preview.fit")</button>
+            </div>
+            @if (!string.IsNullOrEmpty(_preview))
+            {
+                <div class="preview-viewport">
+                    <img class="preview @(_fit ? "" : "native")" src="@_preview" alt="@Localization.Get("preview.output")" />
+                </div>
+            }
+            else
+            {
+                <div class="status">@Localization.Get("preview.hint")</div>
+            }
+        </section>
+    </div>
+</div>
+
+@code {
+    private static readonly string[] Tabs = { "RGB", "RGBA", "R", "G", "B", "A" };
+    private static readonly string[] ChannelColors = { "#ff6b6b", "#69db7c", "#4dabf7", "#ffe066" };
+    private const int MaxFileBytes = 24 * 1024 * 1024;
+    private const int MaxPixels = 32 * 1024 * 1024;
+
+    private DotNetObjectReference<Index>? _self;
+    private readonly TextureImage?[] _images = new TextureImage?[4];
+    private readonly bool[] _invert = new bool[4];
+    private readonly SourceComponent[] _sources = { SourceComponent.Red, SourceComponent.Red, SourceComponent.Red, SourceComponent.Red };
+    private readonly string[] _thumbs = new string[4];
+    private readonly byte[] _solid = { 255, 255, 255, 255 };
+    private readonly string[] _notices = new string[4];
+    private readonly bool[] _soft = new bool[4];
+    private ChannelInput[] _inputs = new ChannelInput[4];
+    private PackedTexture? _packed;
+    private int _targetWidth;
+    private int _targetHeight;
+    private Preset _preset = Preset.Orm;
+    private Preset _fromPreset = Preset.UnityHdrp;
+    private OutputSize _size = OutputSize.Default;
+    private SaveFormat _format = SaveFormat.Png;
+    private string _tab = "RGB";
+    private string _preview = "";
+    private string _status = "";
+    private string _savedName = "";
+    private bool _savedInSession;
+    private bool _channelsSaved;
+    private string _error = "";
+    private string _notice = "";
+    private string _fileName = "";
+    private bool _nameEdited;
+    private bool _convertMode;
+    private bool _fit = true;
+    private TextureImage? _convertSource;
+    private string _convertSourceName = "";
+    private bool _samePreset;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _self = DotNetObjectReference.Create(this);
+        try
+        {
+            await JS.InvokeVoidAsync("ormInterop.install", _self);
+            await JS.InvokeVoidAsync("ormInterop.initExr");
+            await LoadSession();
+        }
+        catch (Exception ex)
+        {
+            _notice = ex.Message;
+        }
+        await JS.InvokeVoidAsync("ormInterop.setLanguage", Localization.Language);
+        RebuildInputs();
+        await RenderThumbs();
+    }
+
+    public void Dispose()
+    {
+        _solidCts?.Cancel();
+        _solidCts?.Dispose();
+        _self?.Dispose();
+    }
+
+    private string T(string english, string russian = "") =>
+        Localization.Language == "ru" && russian.Length > 0 ? russian : english;
+
+    private void SetLanguage(string language)
+    {
+        Localization.SetLanguage(language);
+        _ = JS.InvokeVoidAsync("ormInterop.setLanguage", Localization.Language);
+        RebuildInputs();
+        RefreshStatus();
+        if (_packed is not null) _ = RenderPreview();
+        SaveSession();
+    }
+
+    private void RefreshStatus()
+    {
+        if (_status.Length == 0) return;
+        if (_packed is null)
+            _status = Localization.Get("msg.noMaps");
+        else if (_savedName.Length > 0)
+            _status = Localization.Get("status.saved") + " " + _savedName;
+        else if (_channelsSaved)
+            _status = string.Format(Localization.Get("convert.unpacked"), 4);
+        else
+            _status = $"{_targetWidth}×{_targetHeight} · {_preset.DisplayName}";
+    }
+
+    private void SetMode(bool convert)
+    {
+        _convertMode = convert;
+        _nameEdited = false;
+        _savedInSession = false;
+        Repack();
+        SaveSession();
+    }
+
+    private void OnPresetChanged(ChangeEventArgs e)
+    {
+        _preset = SessionStore.PresetById(e.Value?.ToString());
+        for (var i = 0; i < 4; i++) _invert[i] = false;
+        _samePreset = _preset == _fromPreset;
+        _nameEdited = false;
+        _savedInSession = false;
+        Repack();
+        SaveSession();
+    }
+
+    private void OnFromChanged(ChangeEventArgs e)
+    {
+        _fromPreset = SessionStore.PresetById(e.Value?.ToString());
+        _samePreset = _preset == _fromPreset;
+        _savedInSession = false;
+        Repack();
+        SaveSession();
+    }
+
+    private void OnSizeChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        var selected = value == "original"
+            ? OutputSize.Original
+            : OutputSize.All.FirstOrDefault(s => s.Pixels?.ToString() == value) ?? OutputSize.Default;
+        // Ignore sizes above 8192 px: they would exceed the JS output buffer budget.
+        _size = selected.Pixels is null || selected.Pixels <= 8192 ? selected : OutputSize.Default;
+        Repack();
+        SaveSession();
+    }
+
+    private void OnFormatChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<SaveFormat>(e.Value?.ToString(), true, out var format)) _format = format;
+        Repack();
+        SaveSession();
+    }
+
+    private void OnInvert(Channel channel, ChangeEventArgs e)
+    {
+        _invert[(int)channel] = e.Value is bool b && b;
+        _ = RenderThumb((int)channel);
+        Repack();
+        SaveSession();
+    }
+
+    private void OnSourceChanged(Channel channel, ChangeEventArgs e)
+    {
+        if (Enum.TryParse<SourceComponent>(e.Value?.ToString(), out var component))
+            _sources[(int)channel] = component;
+        _ = RenderThumb((int)channel);
+        Repack();
+        SaveSession();
+    }
+
+    private CancellationTokenSource? _solidCts;
+
+    /// <summary>
+    /// Range input fires on every pointer move. Coalesce the repack and session write
+    /// into one update after 120 ms of silence; the number box commits immediately.
+    /// </summary>
+    private async Task OnSolid(Channel channel, ChangeEventArgs e, bool defer)
+    {
+        if (!byte.TryParse(e.Value?.ToString(), out var value)) return;
+        _solid[(int)channel] = value;
+        if (defer)
+        {
+            _solidCts?.Cancel();
+            _solidCts?.Dispose();
+            _solidCts = new CancellationTokenSource();
+            var token = _solidCts.Token;
+            try { await Task.Delay(120, token); }
+            catch (OperationCanceledException) { return; }
+            if (token.IsCancellationRequested) return;
+        }
+        _ = RenderThumb((int)channel);
+        Repack();
+        SaveSession();
+    }
+
+    private void OnNameChanged(ChangeEventArgs e)
+    {
+        _fileName = e.Value?.ToString() ?? "";
+        _nameEdited = true;
+    }
+
+    private string SourceComponentName(SourceComponent component) => component switch
+    {
+        SourceComponent.Red => Localization.Get("source.red"),
+        SourceComponent.Green => Localization.Get("source.green"),
+        SourceComponent.Blue => Localization.Get("source.blue"),
+        SourceComponent.Alpha => Localization.Get("source.alpha"),
+        _ => Localization.Get("source.gray")
+    };
+
+    private string ChannelName(Channel channel) => _preset.Channels[channel].DisplayName;
+
+    private string WarningText(SlotWarning warning) => warning switch
+    {
+        SlotWarning.Empty => Localization.Get("slot.warn.Empty"),
+        SlotWarning.Constant => Localization.Get("slot.warn.Constant"),
+        SlotWarning.SizeMismatch => Localization.Get("slot.warn.SizeMismatch"),
+        _ => Localization.Get("slot.warn.DuplicateSource")
+    };
+
+    [JSInvokable]
+    public async Task OnFiles(FileDto[]? files)
+    {
+        var errors = new List<string>();
+        _notice = "";
+        if (files is null || files.Length == 0) return;
+
+        foreach (var file in files)
+        {
+            if (file is null) continue;
+            var name = string.IsNullOrWhiteSpace(file.Name) ? T("file", "файл") : file.Name;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(file.Error))
+                    throw new InvalidOperationException(FileError(file.Error));
+                if (string.IsNullOrWhiteSpace(file.Data))
+                    throw new InvalidOperationException(FileError("empty"));
+
+                // A bad index must never index the slot array: fall back to automatic assignment.
+                var channel = file.Channel >= 0 && file.Channel <= 3 ? file.Channel : -1;
+
+                var image = await Decode(file);
+                if (_convertMode)
+                {
+                    _convertSource = image;
+                    _convertSourceName = name;
+                }
+                else if (channel >= 0)
+                {
+                    _images[channel] = image;
+                    _notices[channel] = "";
+                    _soft[channel] = false;
+                }
+                else
+                {
+                    Assign(image, name);
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{name}: {FriendlyMessage(ex)}");
+            }
+        }
+
+        await RenderThumbs();
+        StateHasChanged();
+        // Show the decoded files first; the preview pack follows on the next tick.
+        await Task.Delay(1);
+        Repack();
+        SaveSession();
+        if (errors.Count > 0) _error = string.Join(" | ", errors);
+        StateHasChanged();
+    }
+
+    private string FriendlyMessage(Exception ex) => ex switch
+    {
+        InvalidOperationException => ex.Message,
+        Microsoft.JSInterop.JSException => DecodeError("decode-failed"),
+        FormatException => FileError("corrupt"),
+        System.Text.Json.JsonException => DecodeError("decode-invalid"),
+        _ => DecodeError("unexpected")
+    };
+
+    private string FileError(string code) => code switch
+    {
+        "empty" => T("the file is empty", "файл пустой"),
+        "too-large" => T("the file is too large (limit 24 MB)", "файл слишком большой (лимит 24 МБ)"),
+        "unsupported" => T("unsupported file format", "неподдерживаемый формат файла"),
+        "corrupt" => T("the file is corrupt", "файл повреждён"),
+        "unreadable" => T("the file could not be read", "файл не удалось прочитать"),
+        _ => T("the file could not be processed", "файл не удалось обработать")
+    };
+
+    private string DecodeError(string code) => code switch
+    {
+        "decode-failed" => T("could not decode the image", "не удалось распаковать изображение"),
+        "decode-too-large" => T("the image is too large", "изображение слишком большое"),
+        "decode-invalid" => T("the image has invalid dimensions or data", "изображение имеет неверные размеры или данные"),
+        _ => T("unexpected error while processing the file", "непредвиденная ошибка при обработке файла")
+    };
+
+    [JSInvokable]
+    public void OnKey(int channel, string key)
+    {
+        if (channel >= 0 && channel < 4 && !_convertMode)
+        {
+            _preset = Preset.All[channel];
+            for (var i = 0; i < 4; i++) _invert[i] = false;
+            Repack();
+        }
+        else if (key == "k")
+        {
+            ClearAll();
+        }
+        else if (key == "s")
+        {
+            _ = Save();
+        }
+    }
+
+    private async Task<TextureImage> Decode(FileDto file)
+    {
+        if (string.IsNullOrWhiteSpace(file.Data))
+            throw new InvalidOperationException(FileError("empty"));
+        if (file.Data.Length > (long)MaxFileBytes / 3 * 4 + 8)
+            throw new InvalidOperationException(FileError("too-large"));
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(file.Data);
+        }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException(FileError("corrupt"));
+        }
+        if (bytes.Length == 0)
+            throw new InvalidOperationException(FileError("empty"));
+        if (bytes.Length > MaxFileBytes)
+            throw new InvalidOperationException(FileError("too-large"));
+
+        var extension = Path.GetExtension(file.Name);
+        if (extension.Equals(".tga", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var image = TgaDecoder.Decode(bytes, file.Name);
+                CheckPixels(image.Width, image.Height, image.Pixels.Length);
+                return image;
+            }
+            catch (InvalidOperationException) { throw; }
+            catch (Exception)
+            {
+                throw new InvalidOperationException(FileError("corrupt"));
+            }
+        }
+
+        ImageDataDto? decoded;
+        if (extension.Equals(".exr", StringComparison.OrdinalIgnoreCase))
+        {
+            await JS.InvokeVoidAsync("ormInterop.initExr");
+            decoded = await JS.InvokeAsync<ImageDataDto>("ormInterop.decodeExr", file.Data);
+        }
+        else
+        {
+            decoded = await JS.InvokeAsync<ImageDataDto>("ormInterop.decodeImage", file.Data);
+        }
+        return MakeImage(file.Name, decoded);
+    }
+
+    private TextureImage MakeImage(string name, ImageDataDto? decoded)
+    {
+        if (decoded is null || string.IsNullOrWhiteSpace(decoded.Pixels))
+            throw new InvalidOperationException(DecodeError("decode-invalid"));
+        var expected = CheckPixels(decoded.Width, decoded.Height, -1);
+        byte[] pixels;
+        try
+        {
+            pixels = Convert.FromBase64String(decoded.Pixels);
+        }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException(DecodeError("decode-invalid"));
+        }
+        if (pixels.Length != expected)
+            throw new InvalidOperationException(DecodeError("decode-invalid"));
+        return TextureImage.FromPixels(name, decoded.Width, decoded.Height, pixels);
+    }
+
+    /// <summary>Validates dimensions and returns the exact expected BGRA buffer size.</summary>
+    private int CheckPixels(int width, int height, int actualLength)
+    {
+        if (width <= 0 || height <= 0)
+            throw new InvalidOperationException(DecodeError("decode-invalid"));
+        var size = (long)width * height * 4;
+        if (size > (long)MaxPixels * 4)
+            throw new InvalidOperationException(DecodeError("decode-too-large"));
+        if (actualLength >= 0 && actualLength != size)
+            throw new InvalidOperationException(DecodeError("decode-invalid"));
+        return (int)size;
+    }
+
+    private void Assign(TextureImage image, string fileName)
+    {
+        var kind = Preset.DetectKind(fileName);
+        var targets = _preset.ChannelsFor(kind);
+        var inverted = _preset.InvertedChannelsFor(kind);
+        if (targets.Count == 0) targets = inverted;
+        var softKind = kind is MapKind.Unknown or MapKind.Albedo or MapKind.Normal;
+
+        var index = targets.Select(c => (int)c).FirstOrDefault(i => _images[i] is null, -1);
+        if (index < 0 && targets.Count > 0)
+        {
+            // A recognized map takes its own slot; a soft-assigned occupant is moved away.
+            index = targets.Select(c => (int)c).FirstOrDefault(i => _soft[i], -1);
+            if (index >= 0)
+            {
+                var spare = Enumerable.Range(0, 4).FirstOrDefault(i => _images[i] is null, -1);
+                if (spare >= 0)
+                {
+                    _images[spare] = _images[index];
+                    _notices[spare] = _notices[index];
+                    _soft[spare] = true;
+                }
+            }
+        }
+        if (index < 0) index = Enumerable.Range(0, 4).FirstOrDefault(i => _images[i] is null, -1);
+        if (index < 0)
+        {
+            _notice = Localization.Get("msg.slotsFull");
+            return;
+        }
+
+        _images[index] = image;
+        _invert[index] = inverted.Contains((Channel)index);
+        _soft[index] = softKind;
+        _sources[index] = SourceComponent.Red;
+        _notices[index] = softKind
+            ? string.Format(Localization.Get("slot.warn.manualMismatch"),
+                Preset.KindDisplayName(kind), _preset.Channels[(Channel)index].DisplayName)
+            : "";
+    }
+
+    private void ClearSlot(Channel channel)
+    {
+        var i = (int)channel;
+        _images[i] = null;
+        _thumbs[i] = "";
+        _notices[i] = "";
+        _soft[i] = false;
+        _sources[i] = SourceComponent.Red;
+        _invert[i] = false;
+        _nameEdited = false;
+        _ = RenderThumb(i);
+        Repack();
+        SaveSession();
+    }
+
+    private void ClearAll()
+    {
+        for (var i = 0; i < 4; i++)
+        {
+            _images[i] = null;
+            _thumbs[i] = "";
+            _notices[i] = "";
+            _sources[i] = SourceComponent.Red;
+            _solid[i] = 255;
+        }
+        _convertSource = null;
+        _convertSourceName = "";
+        _nameEdited = false;
+        _fileName = "";
+        _savedInSession = false;
+        _ = RenderThumbs();
+        Repack();
+        SaveSession();
+    }
+
+    private void RebuildInputs()
+    {
+        if (_convertMode && _convertSource is not null)
+        {
+            _inputs = PackerConvert.BuildInputs(_convertSource, _fromPreset, _preset);
+            return;
+        }
+        for (var i = 0; i < 4; i++)
+        {
+            var def = _preset.Channels[(Channel)i];
+            _inputs[i] = _images[i] is { } image
+                ? new ChannelInput(image, _sources[i], 255, _invert[i], Preset.FilterFor(def.Kind))
+                : new ChannelInput(null, SourceComponent.Red, _solid[i], false, Preset.FilterFor(def.Kind));
+        }
+    }
+
+    private bool NeedsAlpha() => _preset.AlphaMode switch
+    {
+        AlphaMode.Required => true,
+        AlphaMode.None => false,
+        _ => _convertMode ? _inputs[3].Image is not null : _images[3] is not null
+    };
+
+    private async void Repack()
+    {
+        // Let Blazor paint the just-updated controls before the 1024² preview work.
+        await Task.Yield();
+        _error = "";
+        _savedName = "";
+        _channelsSaved = false;
+        try
+        {
+        RebuildInputs();
+        (var width, var height) = OutputSizing.TargetSize(_size, _inputs);
+        _targetWidth = width;
+        _targetHeight = height;
+        if (width == 0 || height == 0)
+        {
+            _packed = null;
+            _preview = "";
+            _status = Localization.Get("msg.noMaps");
+            return;
+        }
+
+        // Only the preview is rebuilt while editing. A full 8192² pack is done on Save,
+        // so adding maps stays fast and never moves hundreds of MB across the JS boundary.
+        var previewWidth = Math.Min(width, 1024);
+        var previewHeight = Math.Max(1, (int)Math.Round(height * (double)previewWidth / width));
+        _packed = Packer.Pack(previewWidth, previewHeight,
+            _inputs[0], _inputs[1], _inputs[2], _inputs[3], NeedsAlpha());
+        await using (var pixels = new MemoryStream(_packed.Pixels, writable: false))
+        {
+            await JS.InvokeVoidAsync("ormInterop.setPacked", previewWidth, previewHeight,
+                new DotNetStreamReference(pixels));
+        }
+        _status = $"{width}×{height} · {_preset.DisplayName}";
+        if (!_nameEdited)
+        {
+            var names = _convertMode
+                ? new List<string> { _convertSourceName }
+                : _images.Where(i => i is not null).Select(i => i!.FileName).ToList();
+            _fileName = names.Count > 0
+                ? OutputNaming.Suggest(names, _preset.Suffix)
+                : "Texture" + _preset.Suffix;
+        }
+        _ = RenderPreview();
+        }
+        catch (Exception)
+        {
+            _packed = null;
+            _preview = "";
+            _error = T("could not build the packed texture", "не удалось собрать текстуру");
+            StateHasChanged();
+        }
+    }
+
+    private Task RenderThumbs() => Task.WhenAll(Enumerable.Range(0, 4).Select(RenderThumb));
+
+    private async Task RenderThumb(int index)
+    {
+        var image = _images[index];
+        if (image is null)
+        {
+            // Empty slots are constant channels: show the actual value, not black.
+            var constant = _invert[index] ? (byte)(255 - _solid[index]) : _solid[index];
+            try
+            {
+                _thumbs[index] = await JS.InvokeAsync<string>("ormInterop.renderSolidThumb", constant);
+            }
+            catch (Exception) { _thumbs[index] = ""; }
+            StateHasChanged();
+            return;
+        }
+        var offset = _sources[index] switch
+        {
+            SourceComponent.Red => 2,
+            SourceComponent.Green => 1,
+            SourceComponent.Blue => 0,
+            SourceComponent.Alpha => 3,
+            _ => -1
+        };
+        try
+        {
+            // Thumbnails are 56 px: never transfer a full-size buffer across the JS boundary.
+            var pixels = ThumbPixels(image, out var width, out var height);
+            _thumbs[index] = await JS.InvokeAsync<string>("ormInterop.renderSlotThumb",
+                width, height, Convert.ToBase64String(pixels), offset, _invert[index]);
+            StateHasChanged();
+        }
+        catch (Exception) { _thumbs[index] = ""; }
+    }
+
+    private static byte[] ThumbPixels(TextureImage image, out int width, out int height)
+    {
+        width = image.Width;
+        height = image.Height;
+        const int max = 256;
+        if ((long)width * height <= max * max) return image.Pixels;
+
+        var scale = Math.Max(width / (double)max, height / (double)max);
+        width = Math.Max(1, (int)Math.Round(width / scale));
+        height = Math.Max(1, (int)Math.Round(height / scale));
+        var result = new byte[width * height * 4];
+        for (var y = 0; y < height; y++)
+        {
+            var sy = Math.Min((int)(y * image.Height / (double)height), image.Height - 1);
+            for (var x = 0; x < width; x++)
+            {
+                var sx = Math.Min((int)(x * image.Width / (double)width), image.Width - 1);
+                Array.Copy(image.Pixels, (sy * image.Width + sx) * 4, result, (y * width + x) * 4, 4);
+            }
+        }
+        return result;
+    }
+
+    private bool HasAnyMap => _images.Any(i => i is not null);
+
+    private bool HasInputs => _convertMode ? _convertSource is not null : HasAnyMap;
+
+    private bool CanUnpack => HasInputs;
+
+    private async Task Unpack()
+    {
+        if (!HasInputs || _targetWidth == 0 || _targetHeight == 0) return;
+        try
+        {
+            // Unpack the current result at full resolution, never the source or the preview.
+            var full = Packer.Pack(_targetWidth, _targetHeight,
+                _inputs[0], _inputs[1], _inputs[2], _inputs[3], NeedsAlpha());
+            await using (var pixels = new MemoryStream(full.Pixels, writable: false))
+            {
+                await JS.InvokeVoidAsync("ormInterop.setSource", _targetWidth, _targetHeight,
+                    new DotNetStreamReference(pixels));
+            }
+            await JS.InvokeVoidAsync("ormInterop.saveChannels", Path.GetFileNameWithoutExtension(_fileName));
+            _error = "";
+            _savedName = "";
+            _channelsSaved = true;
+            _status = string.Format(Localization.Get("convert.unpacked"), 4);
+            StateHasChanged();
+        }
+        catch (Exception)
+        {
+            _error = T("could not unpack the channels", "не удалось разложить каналы");
+            StateHasChanged();
+        }
+    }
+
+    private async Task Save()
+    {
+        if (_packed is null) return;
+        var extension = _format switch
+        {
+            SaveFormat.Jpeg => ".jpg",
+            SaveFormat.Tga => ".tga",
+            SaveFormat.Bmp => ".bmp",
+            _ => ".png"
+        };
+        var name = _fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
+            ? _fileName
+            : _fileName + extension;
+        try
+        {
+            // Full resolution is produced only here, when the user actually exports.
+            var full = Packer.Pack(_targetWidth, _targetHeight,
+                _inputs[0], _inputs[1], _inputs[2], _inputs[3], NeedsAlpha());
+            await using (var pixels = new MemoryStream(full.Pixels, writable: false))
+            {
+                await JS.InvokeVoidAsync("ormInterop.setFullPacked", _targetWidth, _targetHeight,
+                    new DotNetStreamReference(pixels));
+            }
+            await JS.InvokeVoidAsync("ormInterop.save", _format.ToString().ToLowerInvariant(), name);
+            _error = "";
+            _savedName = name;
+            _savedInSession = true;
+            _channelsSaved = false;
+            _status = Localization.Get("status.saved") + " " + name;
+        }
+        catch (Exception)
+        {
+            _error = T("could not save the file", "не удалось сохранить файл");
+        }
+        StateHasChanged();
+    }
+
+    private async Task RenderPreview()
+    {
+        if (_packed is null) return;
+        try
+        {
+            _preview = await JS.InvokeAsync<string>("ormInterop.renderPreview", _tab);
+            StateHasChanged();
+        }
+        catch (Exception)
+        {
+            _error = T("could not render the preview", "не удалось отобразить превью");
+            StateHasChanged();
+        }
+    }
+
+    private void SetTab(string tab)
+    {
+        if (!HasInputs && tab is "R" or "G" or "B" or "A") return;
+        _tab = tab;
+        if (_packed is not null) _ = RenderPreview();
+    }
+
+    private async Task LoadSession()
+    {
+        var json = await JS.InvokeAsync<string>("ormInterop.loadSession");
+        if (string.IsNullOrWhiteSpace(json)) return;
+        try
+        {
+            var session = System.Text.Json.JsonSerializer.Deserialize<WebSession>(json);
+            if (session is null) return;
+            _preset = SessionStore.PresetById(session.PresetId);
+            _fromPreset = SessionStore.PresetById(session.FromId);
+            var restoredSize = OutputSize.All.FirstOrDefault(s => s.Pixels?.ToString() == session.Size);
+            // Ignore sizes above 8192 px: they would exceed the JS output buffer budget.
+            _size = restoredSize is { Pixels: > 8192 } ? OutputSize.Default : restoredSize ?? OutputSize.Default;
+            if (Enum.TryParse<SaveFormat>(session.Format, true, out var format)) _format = format;
+            _convertMode = session.Convert;
+            for (var i = 0; i < 4; i++)
+            {
+                _invert[i] = i < session.Invert.Length && session.Invert[i];
+                _solid[i] = i < session.Solid.Length ? session.Solid[i] : (byte)255;
+            }
+            _samePreset = _preset == _fromPreset;
+            Localization.SetLanguage(session.Language == Localization.Russian
+                ? Localization.Russian : Localization.English);
+        }
+        catch (Exception) { /* Ignore a broken local session. */ }
+    }
+
+    private void SaveSession()
+    {
+        var session = new WebSession
+        {
+            PresetId = SessionStore.PresetId(_preset),
+            FromId = SessionStore.PresetId(_fromPreset),
+            Size = _size.Pixels?.ToString() ?? "original",
+            Format = _format.ToString(),
+            Convert = _convertMode,
+            Language = Localization.Language,
+            Invert = _invert.ToArray(),
+            Solid = _solid.ToArray()
+        };
+        _ = JS.InvokeVoidAsync("ormInterop.saveSession",
+            System.Text.Json.JsonSerializer.Serialize(session));
+    }
+
+    public sealed class FileDto
+    {
+        public string Name { get; set; } = "";
+        public string Data { get; set; } = "";
+        public int Channel { get; set; } = -1;
+        public string Error { get; set; } = "";
+    }
+
+    public sealed class ImageDataDto
+    {
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public string Pixels { get; set; } = "";
+    }
+
+    private sealed class WebSession
+    {
+        public string PresetId { get; set; } = "orm";
+        public string FromId { get; set; } = "hdrp";
+        public string Size { get; set; } = "1024";
+        public string Format { get; set; } = "Png";
+        public bool Convert { get; set; }
+        public string Language { get; set; } = "en";
+        public bool[] Invert { get; set; } = new bool[4];
+        public byte[] Solid { get; set; } = { 255, 255, 255, 255 };
+    }
+}

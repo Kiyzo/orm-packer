@@ -1,0 +1,14 @@
+{
+  "name": "orm-packer-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-exr.mjs"
+  },
+  "dependencies": {
+    "exrs": "1.0.4"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

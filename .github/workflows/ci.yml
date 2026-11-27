@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  CI: true
+
+jobs:
+  build-test-publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Install WebAssembly AOT toolchain
+        run: dotnet workload restore web/OrmPacker.Web/OrmPacker.Web.csproj
+
+      - name: Restore (locked)
+        run: |
+          # --locked-mode fails if packages.lock.json drifts (RID changes included);
+          # refresh the lock locally, don't loosen this.
+          dotnet restore OrmPacker/OrmPacker.csproj --locked-mode
+          dotnet restore tests/OrmPacker.Tests/OrmPacker.Tests.csproj --locked-mode
+
+      - name: Build
+        run: dotnet build OrmPacker/OrmPacker.csproj -c Release --no-restore
+
+      - name: Test
+        run: dotnet run --project tests/OrmPacker.Tests/OrmPacker.Tests.csproj -c Release --no-restore
+
+      - name: Audit dependencies
+        run: dotnet list OrmPacker/OrmPacker.csproj package --vulnerable --include-transitive
+
+      - name: Publish single-file
+        run: ./publish.ps1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web EXR decoder
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build web app
+        run: dotnet build web/OrmPacker.Web/OrmPacker.Web.csproj -c Release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orm-packer-win-x64-fd
+          path: publish/*
+          if-no-files-found: error

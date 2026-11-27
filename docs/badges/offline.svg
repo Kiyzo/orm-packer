@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="104" height="20" role="img" aria-label="offline">
+  <rect width="48" height="20" fill="#555"/>
+  <rect x="48" width="56" height="20" fill="#2ea043"/>
+  <g fill="#fff" font-family="Verdana,sans-serif" font-size="11">
+    <text x="7" y="14">works</text>
+    <text x="55" y="14">offline</text>
+  </g>
+</svg>

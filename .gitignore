@@ -1,0 +1,15 @@
+bin/
+obj/
+publish/
+*.user
+.vs/
+
+# Web build outputs
+web/node_modules/
+web/OrmPacker.Web/wwwroot/js/exr-bundle.js
+web/OrmPacker.Web/wwwroot/js/*.wasm
+
+# Local IDE state and ad-hoc test assets
+.idea/
+AGENTS.md
+/textures/

@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  CI: true
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Read version
+        shell: pwsh
+        run: |
+          $props = Get-Content Directory.Build.props -Raw
+          $version = ([regex]::Match($props, '<Version>([^<]+)</Version>')).Groups[1].Value
+          if (-not $version) { throw 'Version not found in Directory.Build.props' }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+
+      - name: Restore (locked)
+        run: |
+          # --locked-mode fails if packages.lock.json drifts (RID changes included);
+          # refresh the lock locally, don't loosen this.
+          dotnet restore OrmPacker/OrmPacker.csproj --locked-mode
+          dotnet restore tests/OrmPacker.Tests/OrmPacker.Tests.csproj --locked-mode
+
+      - name: Test
+        run: dotnet run --project tests/OrmPacker.Tests/OrmPacker.Tests.csproj -c Release --no-restore
+
+      - name: Publish framework-dependent
+        run: ./publish.ps1 -OutputDir publish/fd
+
+      - name: Publish self-contained compressed
+        run: ./publish.ps1 -SelfContained -Compressed -OutputDir publish/sc
+
+      # publish.ps1 writes a per-mode SHA256SUMS.txt. The release must carry a single
+      # checksum file that names both attached archives, not two files with the same name.
+      - name: Combine release checksums
+        shell: pwsh
+        run: |
+          $lines = foreach ($zip in Get-ChildItem publish -Recurse -Filter 'orm-packer-*.zip') {
+            '{0}  {1}' -f (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $zip.Name
+          }
+          $lines | Set-Content publish/SHA256SUMS.txt -Encoding ascii
+          Get-Content publish/SHA256SUMS.txt
+
+      - name: Create tag and GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
+          files: |
+            publish/**/orm-packer-*.zip
+            publish/SHA256SUMS.txt
+          # GitHub prepends a supplied body to generated notes; write one explicit body instead.
+          generate_release_notes: false
+          # Re-runs replace the body so a second "Full Changelog" line cannot appear.
+          append_body: false
+          body: |
+            ORM Packer **v${{ env.VERSION }}** — offline PBR mask packer for Windows, browser and CLI.
+
+            Changes: [CHANGELOG.md](https://github.com/Kiyzo/orm-packer/blob/master/CHANGELOG.md)
+
+            - Windows: `orm-packer-${{ env.VERSION }}-win-x64-fd.zip` (needs .NET 8 Desktop Runtime)
+            - Windows, self-contained: `orm-packer-${{ env.VERSION }}-win-x64-sc-compressed.zip`
+            - Verify downloads with `SHA256SUMS.txt`
+            - Browser: https://kiyzo.github.io/orm-packer/
+          fail_on_unmatched_files: true

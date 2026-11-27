@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ORM Packer</title>
+    <!-- GitHub Pages serves this from /orm-packer/; keep the base href in sync with the repo name. -->
+    <base href="/orm-packer/" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="apple-touch-icon" href="favicon.png" />
+    <!-- Bump the ?v= value when app.css changes so returning visitors don't get a cached stylesheet. -->
+    <link href="css/app.css?v=1.0.1" rel="stylesheet" />
+    <script src="js/exr-bundle.js"></script>
+    <script src="js/interop.js"></script>
+</head>
+
+<body>
+    <input id="orm-file-input" type="file" multiple hidden
+           accept=".png,.jpg,.jpeg,.webp,.bmp,.gif,.tga,.exr" />
+    <div id="app">Loading ORM Packer…</div>
+    <div id="blazor-error-ui" hidden>
+        An unhandled error has occurred. <a href="" class="reload">Reload</a>
+        <a class="dismiss">×</a>
+    </div>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,53 @@
+name: Bug report
+description: Report incorrect behavior of the app or CLI
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report. Please do not attach private textures.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `OrmPacker.exe --version`, or the release tag.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options: [GUI, CLI, batch, convert, unpack]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: Windows version, input formats, output size/format.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log
+      description: Contents of `%LOCALAPPDATA%\OrmPacker\crash.log` if present.
